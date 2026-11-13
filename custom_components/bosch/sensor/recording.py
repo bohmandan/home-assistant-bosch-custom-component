@@ -15,12 +15,23 @@ from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
+FIRST_IMPORT_DAYS = 7
+
 
 class RecordingSensor(StatisticHelper):
     """Representation of Recording Sensor."""
 
     signal = SIGNAL_RECORDING_UPDATE_BOSCH
     _domain_name = "Recording"
+
+    def __init__(self, **kwargs) -> None:
+        """Initialize recording sensor."""
+        super().__init__(**kwargs)
+        if self._new_stats_api:
+            # The data goes to external statistics and the state is only a
+            # marker (-17). Without a state class HA won't build a second,
+            # meaningless statistic from that marker.
+            self._attr_state_class = None
 
     @property
     def device_name(self) -> str:
@@ -198,10 +209,13 @@ class RecordingSensor(StatisticHelper):
         now = dt_util.now()
         last_stat = await self.get_last_stat()
         if len(last_stat) == 0 or len(last_stat[self.statistic_id]) == 0:
+            # One gateway request per day, and recordings are slow on IVT
+            # gateways: keep the first import small.
             _LOGGER.debug(
-                "Last stats not exist. Trying to fetch last 30 days of data."
+                "Last stats not exist. Trying to fetch last %s days of data.",
+                FIRST_IMPORT_DAYS,
             )
-            start_time = now - timedelta(days=30)
+            start_time = now - timedelta(days=FIRST_IMPORT_DAYS)
             all_stats = await self.fetch_past_data(
                 start_time=start_time, stop_time=now
             )
