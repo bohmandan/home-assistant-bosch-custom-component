@@ -28,10 +28,24 @@ class RecordingSensor(StatisticHelper):
         """Initialize recording sensor."""
         super().__init__(**kwargs)
         if self._new_stats_api:
-            # The data goes to external statistics and the state is only a
-            # marker (-17). Without a state class HA won't build a second,
-            # meaningless statistic from that marker.
+            # The data goes to external statistics; the state shows today's
+            # total so far. Without a state class HA won't build a second
+            # statistic from it (it would duplicate the external one, with
+            # every hour booked an hour late).
             self._attr_state_class = None
+
+    def _today_total(self) -> float | None:
+        """Today's total so far for energy, else the latest hourly value."""
+        rows = self._bosch_object.state
+        if not isinstance(rows, list):
+            return None
+        rows = [row for row in rows if isinstance(row.get("d"), datetime)]
+        if self._unit_of_measurement not in ("kWh", "Wh"):
+            return rows[-1][VALUE] if rows else None
+        today = dt_util.now().date()
+        return round(
+            sum(row[VALUE] for row in rows if row["d"].date() == today), 1
+        )
 
     @property
     def device_name(self) -> str:
@@ -100,6 +114,10 @@ class RecordingSensor(StatisticHelper):
             )
             async with self._statistic_import_lock:
                 await self._insert_statistics()
+            # The kWh live in the external statistic; give the entity a
+            # readable value too, so it can sit in an area or on a card.
+            self._state = self._today_total()
+            self.async_schedule_update_ha_state()
         else:
             _LOGGER.debug("Old gather data algorithm.")
             await self.async_old_gather_update()
