@@ -4,6 +4,10 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from .const import DEFAULT_MAX_TEMP, DEFAULT_MIN_TEMP, DOMAIN
 from homeassistant.helpers.entity import DeviceInfo
 
+# Same threshold as the connector's back-off: one stray timeout does not
+# blank the dashboard, a dead gateway does.
+GATEWAY_DOWN_FAILURES = 3
+
 
 class BoschEntity:
     """Bosch base entity class."""
@@ -21,6 +25,22 @@ class BoschEntity:
     def bosch_object(self):
         """Return upstream component. Used for refreshing."""
         return self._bosch_object
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while the gateway does not answer.
+
+        The client keeps the last value when a read fails, so without this
+        every entity shows stale data as if it were current. The hardened
+        HTTP connector counts consecutive transport failures (timeouts,
+        refused connections; a 404 counts as an answer) and resets the count
+        on the first good answer.
+        """
+        connector = getattr(self._gateway, "_connector", None)
+        health = getattr(connector, "health", None)
+        if health is not None and health.consecutive_failures >= GATEWAY_DOWN_FAILURES:
+            return False
+        return True
 
     async def async_added_to_hass(self):
         """Register callbacks."""

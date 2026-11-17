@@ -59,6 +59,8 @@ from homeassistant.util.json import load_json
 
 from custom_components.bosch.switch import SWITCH
 
+from .bosch_entity import GATEWAY_DOWN_FAILURES
+
 from .const import (
     ACCESS_KEY,
     ACCESS_TOKEN,
@@ -224,6 +226,7 @@ class BoschGatewayEntry:
         self._signal_registered = False
         self.supported_platforms = []
         self._update_lock = None
+        self._gateway_was_down = False
 
     @property
     def device_id(self) -> str:
@@ -446,6 +449,34 @@ class BoschGatewayEntry:
             await self.component_update(SWITCH, event_time)
             await self.component_update(NUMBER, event_time)
             _LOGGER.debug("Finish updating entities. Waiting for next scheduled check.")
+        self._push_availability()
+
+    @callback
+    def _push_availability(self) -> None:
+        """Write all entity states when the gateway goes down or comes back.
+
+        Polled entities pick up `available` by themselves; switches, selects
+        and statistic sensors are not polled and would keep looking current.
+        """
+        health = getattr(getattr(self.gateway, "_connector", None), "health", None)
+        if health is None:
+            return
+        down = health.consecutive_failures >= GATEWAY_DOWN_FAILURES
+        if down == self._gateway_was_down:
+            return
+        self._gateway_was_down = down
+        _LOGGER.warning(
+            "Bosch gateway %s %s; marking its entities %s.",
+            self.gateway.host,
+            "is not answering" if down else "is answering again",
+            "unavailable" if down else "available",
+        )
+        for entities in self.hass.data[DOMAIN].get(self.uuid, {}).values():
+            if not isinstance(entities, list):
+                continue
+            for entity in entities:
+                if getattr(entity, "hass", None) and getattr(entity, "enabled", False):
+                    entity.async_write_ha_state()
 
     async def firmware_refresh(self, event_time=None):
         """Call Bosch to refresh firmware info."""
