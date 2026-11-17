@@ -21,6 +21,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import create_notification_firmware
 from .const import (
+    DEFAULT_UPDATE_INTERVAL,
+    MAX_UPDATE_INTERVAL,
+    UPDATE_INTERVAL,
     ACCESS_KEY,
     ACCESS_TOKEN,
     CONF_DEVICE_TYPE,
@@ -212,6 +215,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         new_stats_api = self.entry.options.get("new_stats_api", False)
         optimistic_mode = self.entry.options.get("optimistic_mode", False)
+        update_interval = self.entry.options.get(
+            UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -219,6 +225,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 {
                     vol.Optional("new_stats_api", default=new_stats_api): bool,
                     vol.Optional("optimistic_mode", default=optimistic_mode): bool,
+                    vol.Optional(
+                        UPDATE_INTERVAL, default=update_interval
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=DEFAULT_UPDATE_INTERVAL, max=MAX_UPDATE_INTERVAL),
+                    ),
                 }
             ),
         )

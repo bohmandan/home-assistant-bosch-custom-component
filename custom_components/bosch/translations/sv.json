@@ -46,7 +46,8 @@
         "title": "Bosch-alternativ",
         "data": {
           "new_stats_api": "Använd nytt statistik-API",
-          "optimistic_mode": "Använd optimistiskt läge för vissa funktioner (för närvarande inställning av Easycontrol driftläge)."
+          "optimistic_mode": "Använd optimistiskt läge för vissa funktioner (för närvarande inställning av Easycontrol driftläge).",
+          "update_interval": "Minuter mellan uppdateringar (1 = standard; 5 eller mer skonar IVT-gateways)"
         }
       }
     }

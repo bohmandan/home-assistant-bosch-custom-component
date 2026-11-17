@@ -77,6 +77,8 @@ from .const import (
     NOTIFICATION_ID,
     RECORDING_INTERVAL,
     SCAN_INTERVAL,
+    UPDATE_INTERVAL,
+    DEFAULT_UPDATE_INTERVAL,
     SIGNAL_BINARY_SENSOR_UPDATE_BOSCH,
     SIGNAL_BOSCH,
     SIGNAL_CLIMATE_UPDATE_BOSCH,
@@ -290,8 +292,17 @@ class BoschGatewayEntry:
         ):
             _LOGGER.debug("Registering thermostat update interval.")
             self._signal_registered = True
+            minutes = self.config_entry.options.get(
+                UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+            )
+            interval = (
+                timedelta(minutes=minutes)
+                if minutes != DEFAULT_UPDATE_INTERVAL
+                else SCAN_INTERVAL
+            )
+            _LOGGER.info("Bosch refresh interval: %s.", interval)
             self.hass.data[DOMAIN][self.uuid][INTERVAL] = async_track_time_interval(
-                self.hass, self.thermostat_refresh, SCAN_INTERVAL
+                self.hass, self.thermostat_refresh, interval
             )
             self.hass.data[DOMAIN][self.uuid][FW_INTERVAL] = async_track_time_interval(
                 self.hass,

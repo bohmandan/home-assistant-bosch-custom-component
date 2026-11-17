@@ -79,6 +79,11 @@ UNITS_CONVERTER = {
 
 NOTIFICATION_ID = "bosch_notification"
 SCAN_INTERVAL = timedelta(seconds=60)
+# Option: minutes between full refreshes. Fragile gateways (IVT) last longer
+# with fewer requests; recordings keep their own hourly schedule.
+UPDATE_INTERVAL = "update_interval"
+DEFAULT_UPDATE_INTERVAL = 1
+MAX_UPDATE_INTERVAL = 60
 FIRMWARE_SCAN_INTERVAL = timedelta(hours=4)
 SCAN_SENSOR_INTERVAL = timedelta(seconds=120)
 INTERVAL = "interval"
