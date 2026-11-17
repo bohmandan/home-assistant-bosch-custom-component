@@ -217,6 +217,18 @@ class RecordingSensor(StatisticHelper):
                     sum=sum,
                 )
             )
+        if not statistics_to_push:
+            # Nothing used (e.g. the electric heater). Still store a row, or
+            # the next run finds no history (first import) or an old base row
+            # (range re-fetch) and asks the gateway for whole days again,
+            # every hour. Start of today is safe: real hours of today come
+            # later with a higher sum, and hour 00 is overwritten if it has
+            # data.
+            statistics_to_push.append(
+                StatisticData(
+                    start=dt_util.start_of_local_day(), state=0, sum=sum
+                )
+            )
         self.add_external_stats(stats=statistics_to_push)
         self._last_reset = now
         return sum
@@ -237,10 +249,9 @@ class RecordingSensor(StatisticHelper):
             all_stats = await self.fetch_past_data(
                 start_time=start_time, stop_time=now
             )
-            if not all_stats:
-                _LOGGER.warn("Stats not found.")
-                return
-            all_stats = list(all_stats.values())
+            # Empty means no consumption in that period: append_statistics
+            # then stores a zero row, so this import is not repeated hourly.
+            all_stats = list((all_stats or {}).values())
             self.append_statistics(stats=all_stats, sum=_sum, now=now)
             return
 
@@ -264,7 +275,7 @@ class RecordingSensor(StatisticHelper):
         all_stats = []
 
         async def get_last_stats_from_bosch_api():
-            last_stats_row = self.get_last_stats_before_date(
+            last_stats_row = await self.async_get_last_stats_before_date(
                 last_stats=last_stats, day=start_of_day
             )
             start_time = last_stats_row.get("start")
@@ -277,7 +288,7 @@ class RecordingSensor(StatisticHelper):
                     self.statistic_id,
                     start_time,
                 )
-            elif start_time.date() < now.date() - timedelta(days=1):
+            elif dt_util.as_local(start_time).date() < now.date() - timedelta(days=1):
                 diff = now - start_time
                 _LOGGER.debug(
                     "Last row of statistic %s found %s, missing %s with current sum %s",
@@ -305,7 +316,7 @@ class RecordingSensor(StatisticHelper):
                 # let's get last state once again
                 # as bosch state provide whole day always.
                 first_date_from_state = self._bosch_object.state[0]
-                last_stats_row = self.get_last_stats_before_date(
+                last_stats_row = await self.async_get_last_stats_before_date(
                     last_stats=last_stats, day=first_date_from_state["d"]
                 )
                 _sum = last_stats_row.get("sum", 0)
