@@ -23,6 +23,10 @@ _LOGGER = logging.getLogger(__name__)
 # Gateways with a processing lag still get a value, up to this age.
 _MAX_RECORDING_LAG = timedelta(hours=6)
 
+# One gateway request per day, and recordings are slow on IVT gateways: keep
+# the first import small.
+FIRST_IMPORT_DAYS = 7
+
 
 class RecordingSensor(StatisticHelper):
     """Representation of Recording Sensor."""
@@ -53,6 +57,11 @@ class RecordingSensor(StatisticHelper):
         )
         self._unit_of_measurement = bosch_object.unit_of_measurement
         self._stale_logged = False
+        if new_stats_api:
+            # The data goes to external statistics; the state shows today's
+            # total so far. Without a state class HA won't build a second
+            # statistic from it (it would duplicate the external one).
+            self._attr_state_class = None
 
     @property
     def device_name(self) -> str:
@@ -135,10 +144,25 @@ class RecordingSensor(StatisticHelper):
     def _native_value(self) -> Any:
         """Return the raw state of the sensor."""
         if self._new_stats_api:
-            return -17 # Legend state for external stats
+            # The kWh live in the external statistic; give the entity a
+            # readable value too, so it can sit in an area or on a card.
+            return self._today_total()
 
         row = self._current_row()
         return row.get(VALUE) if row else None
+
+    def _today_total(self) -> float | None:
+        """Today's total so far for energy, else the latest hourly value."""
+        rows = self._bosch_object.state
+        if not isinstance(rows, list):
+            return None
+        rows = [row for row in rows if isinstance(row.get("d"), datetime)]
+        if self._unit_of_measurement not in ("kWh", "Wh"):
+            return rows[-1][VALUE] if rows else None
+        today = dt_util.now().date()
+        return round(
+            sum(float(row[VALUE]) for row in rows if row["d"].date() == today), 1
+        )
 
     async def _upsert_past_statistics(
         self, start: datetime, stop: datetime
@@ -235,6 +259,18 @@ class RecordingSensor(StatisticHelper):
                     sum=sum,
                 )
             )
+        if not statistics_to_push:
+            # Nothing used (e.g. the electric heater). Still store a row, or
+            # the next run finds no history (first import) or an old base row
+            # (range re-fetch) and asks the gateway for whole days again,
+            # every hour. Start of today is safe: real hours of today come
+            # later with a higher sum, and hour 00 is overwritten if it has
+            # data.
+            statistics_to_push.append(
+                StatisticData(
+                    start=dt_util.start_of_local_day(), state=0, sum=sum
+                )
+            )
         self.add_external_stats(stats=statistics_to_push)
         self._last_reset = now
         return sum
@@ -247,16 +283,17 @@ class RecordingSensor(StatisticHelper):
             last_stat = await self.get_last_stat()
             if not last_stat or self.statistic_id not in last_stat or len(last_stat[self.statistic_id]) == 0:
                 _LOGGER.debug(
-                    "Last stats not exist. Trying to fetch last 30 days of data."
+                    "Last stats not exist. Trying to fetch last %s days of data.",
+                    FIRST_IMPORT_DAYS,
                 )
                 all_stats = await self.fetch_past_data(
-                    start_time=now - timedelta(days=30), stop_time=now
+                    start_time=now - timedelta(days=FIRST_IMPORT_DAYS),
+                    stop_time=now,
                 )
-                if not all_stats:
-                    _LOGGER.warning("Stats not found.")
-                    return
+                # Empty means no consumption in that period: append_statistics
+                # then stores a zero row, so this import is not repeated hourly.
                 self.append_statistics(
-                    stats=list(all_stats.values()), sum=_sum, now=now
+                    stats=list((all_stats or {}).values()), sum=_sum, now=now
                 )
                 return
 
@@ -280,7 +317,7 @@ class RecordingSensor(StatisticHelper):
             last_stats = await get_last_stats_in_ha()
 
             async def get_last_stats_from_bosch_api() -> tuple[list[Any], float]:
-                last_stats_row = self.get_last_stats_before_date(
+                last_stats_row = await self.async_get_last_stats_before_date(
                     last_stats=last_stats, day=start_of_day
                 )
                 start_time_raw = last_stats_row.get("start")
@@ -296,7 +333,9 @@ class RecordingSensor(StatisticHelper):
                         self.statistic_id,
                         start_time,
                     )
-                elif start_time and start_time.date() < now.date() - timedelta(days=1):
+                # Compare local dates: a row at local midnight is still the
+                # previous day in UTC and would look one day older.
+                elif dt_util.as_local(start_time).date() < now.date() - timedelta(days=1):
                     diff = now - start_time
                     _LOGGER.debug(
                         "Last row of statistic %s found %s, missing %s with current sum %s",
@@ -325,7 +364,7 @@ class RecordingSensor(StatisticHelper):
                     # let's get last state once again
                     # as bosch state provide whole day always.
                     first_date_from_state = state[0]
-                    last_stats_row = self.get_last_stats_before_date(
+                    last_stats_row = await self.async_get_last_stats_before_date(
                         last_stats=last_stats, day=first_date_from_state["d"]
                     )
                     _sum = cast(float, last_stats_row.get("sum", 0.0))
